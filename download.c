@@ -91,10 +91,6 @@ int get_port(const url_info *info)
    {
       return FTP_SERVER_PORT;
    }
-   else if (strcmp(info->protocol, "http") == 0)
-   {
-      return HTTP_PORT;
-   }
    else
    {
       return -1;

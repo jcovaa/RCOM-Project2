@@ -14,7 +14,6 @@
 #include <ctype.h>
 
 #define FTP_SERVER_PORT 21
-#define HTTP_PORT 80
 
 #define MAX_RESPONSE_SIZE 1024
 
