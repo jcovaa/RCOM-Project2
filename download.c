@@ -267,6 +267,7 @@ int download_file(const int socketfdA, const int socketfdB, char *filename)
       fwrite(buffer, 1, bytes, f);
    }
    fclose(f);
+   close(socketfdB);
 
    int code = read_reply(socketfdA, buffer);
    printf("Final Response (%d):\n%s\n", code, buffer);
@@ -393,9 +394,10 @@ int main(int argc, char **argv)
       exit(-1);
    }
 
-   if (send_retr(sockfdA, info.path) != 150)
+   int retr_code = send_retr(sockfdA, info.path);
+   if (retr_code != 150 && retr_code != 125)
    {
-      fprintf(stderr, "Error: RETR command failed\n");
+      fprintf(stderr, "Error: RETR command failed with code %d\n", retr_code);
       close(sockfdA);
       close(sockfdB);
       exit(-1);
@@ -405,12 +407,10 @@ int main(int argc, char **argv)
    {
       fprintf(stderr, "Error: File download failed\n");
       close(sockfdA);
-      close(sockfdB);
       exit(-1);
    }
 
    close_connection(sockfdA);
    close(sockfdA);
-   close(sockfdB);
    return 0;
 }
