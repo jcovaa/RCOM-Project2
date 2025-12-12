@@ -247,6 +247,12 @@ int send_retr(const int socketfd, const char *filename)
 
 int download_file(const int socketfdA, const int socketfdB, char *filename)
 {
+   if (filename == NULL || filename[0] == '\0')
+   {
+      fprintf(stderr, "Error: Invalid filename for download\n");
+      return -1;
+   }
+   
    FILE *f = fopen(filename, "wb");
    if (f == NULL)
    {
