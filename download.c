@@ -24,6 +24,13 @@ int parse_url(const char *url, url_info *info)
    strncpy(info->protocol, url, proto_len);
    info->protocol[proto_len] = '\0';
 
+   /* Force ftp only */
+   if (strcmp(info->protocol, "ftp") != 0)
+   {
+      fprintf(stderr, "Error: Only ftp:// URLs are supported\n");
+      return -1;
+   }
+
    const char *start = p + 3;
 
    const char *at = strchr(start, '@');
@@ -38,6 +45,9 @@ int parse_url(const char *url, url_info *info)
       size_t user_len = colon - start;
       size_t pass_len = at - colon - 1;
 
+      if (user_len >= sizeof(info->user) || pass_len >= sizeof(info->pass))
+         return -1;
+
       strncpy(info->user, start, user_len);
       info->user[user_len] = '\0';
       strncpy(info->pass, colon + 1, pass_len);
@@ -47,29 +57,40 @@ int parse_url(const char *url, url_info *info)
    }
    else
    {
-      strcpy(info->user, "anonymous");
-      strcpy(info->pass, "anonymous");
+      /* Default user/pass: anonymous / pass@domain (if you prefer use "anonymous" here) */
+      strncpy(info->user, "anonymous", sizeof(info->user)-1);
+      /* default password as pass@domain (replace as required by enunciado) */
+      snprintf(info->pass, sizeof(info->pass), "pass@%s", start);
    }
 
    const char *slash = strchr(start, '/');
    if (!slash)
    {
-      strcpy(info->host, start);
-      strcpy(info->path, "/");
-      info->filename[0] = '\0';
+      /* Require a path */
+      fprintf(stderr, "Error: URL must include a path to the file\n");
+      return -1;
    }
    else
    {
       size_t host_len = slash - start;
+      if (host_len == 0 || host_len >= sizeof(info->host))
+         return -1;
       strncpy(info->host, start, host_len);
       info->host[host_len] = '\0';
 
-      strcpy(info->path, slash);
+      strncpy(info->path, slash, sizeof(info->path)-1);
+      info->path[sizeof(info->path)-1] = '\0';
 
       const char *last_slash = strrchr(info->path, '/');
       if (last_slash && *(last_slash + 1) != '\0')
       {
-         strcpy(info->filename, last_slash + 1);
+         strncpy(info->filename, last_slash + 1, sizeof(info->filename)-1);
+         info->filename[sizeof(info->filename)-1] = '\0';
+      }
+      else
+      {
+         /* no filename */
+         info->filename[0] = '\0';
       }
    }
 
@@ -80,7 +101,8 @@ int parse_url(const char *url, url_info *info)
    }
 
    const char *addr = inet_ntoa(*((struct in_addr *)h->h_addr));
-   strcpy(info->ip, addr);
+   strncpy(info->ip, addr, sizeof(info->ip)-1);
+   info->ip[sizeof(info->ip)-1] = '\0';
 
    return 0;
 }
@@ -132,10 +154,11 @@ int authenticate_ftp(const int socket, const char *user, const char *pass)
 {
    char user_cmd[256];
    char pass_cmd[256];
+   char type_cmd[] = "TYPE I\r\n";
    char response[MAX_RESPONSE_SIZE];
 
-   sprintf(user_cmd, "USER %s\r\n", user);
-   sprintf(pass_cmd, "PASS %s\r\n", pass);
+   snprintf(user_cmd, sizeof(user_cmd), "USER %s\r\n", user);
+   snprintf(pass_cmd, sizeof(pass_cmd), "PASS %s\r\n", pass);
 
    if (write(socket, user_cmd, strlen(user_cmd)) < 0)
    {
@@ -146,22 +169,47 @@ int authenticate_ftp(const int socket, const char *user, const char *pass)
    int code = read_reply(socket, response);
    printf("USER Response (%d):\n%s\n", code, response);
 
-   if (code != 331)
+   if (code == 230)
+   {
+      printf("Logged in as %s (no password required)\n", user);
+   }
+   else if (code == 331)
+   {
+      if (write(socket, pass_cmd, strlen(pass_cmd)) < 0)
+      {
+         fprintf(stderr, "Error: Failed to send PASS command\n");
+         return -1;
+      }
+      code = read_reply(socket, response);
+      printf("PASS Response (%d):\n%s\n", code, response);
+      if (code != 230)
+      {
+         fprintf(stderr, "Error: PASS command failed with code %d\n", code);
+         return code;
+      }
+      printf("Logged in as %s\n", user);
+   }
+   else
    {
       fprintf(stderr, "Error: USER command failed with code %d\n", code);
       return -1;
    }
 
-   if (write(socket, pass_cmd, strlen(pass_cmd)) < 0)
+   /* Send TYPE I (binary) */
+   if (write(socket, type_cmd, strlen(type_cmd)) < 0)
    {
-      fprintf(stderr, "Error: Failed to send PASS command\n");
+      fprintf(stderr, "Error: Failed to send TYPE I command\n");
+      return -1;
+   }
+   code = read_reply(socket, response);
+   printf("TYPE Response (%d):\n%s\n", code, response);
+   if (code != 200)
+   {
+      fprintf(stderr, "Error: TYPE I command failed with code %d\n", code);
       return -1;
    }
 
-   code = read_reply(socket, response);
-   printf("PASS Response (%d):\n%s\n", code, response);
-
-   return code;
+   return 230;
 }
 
 int enter_passive_mode(const int socket, char *ip, int *port)
@@ -169,6 +217,7 @@ int enter_passive_mode(const int socket, char *ip, int *port)
    char response[MAX_RESPONSE_SIZE];
    const char *pasv_cmd = "PASV\r\n";
 
+   printf("Entering Passive Mode...\n");
    if (write(socket, pasv_cmd, strlen(pasv_cmd)) < 0)
    {
       fprintf(stderr, "Error: Failed to send PASV command\n");
@@ -191,10 +240,15 @@ int enter_passive_mode(const int socket, char *ip, int *port)
       return -1;
    }
 
-   sscanf(p1_start + 1, "%d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2);
-   sprintf(ip, "%d.%d.%d.%d", h1, h2, h3, h4);
+   if (sscanf(p1_start + 1, "%d,%d,%d,%d,%d,%d", &h1, &h2, &h3, &h4, &p1, &p2) != 6)
+   {
+      fprintf(stderr, "Error: PASV sscanf failed\n");
+      return -1;
+   }
+   snprintf(ip, 16, "%d.%d.%d.%d", h1, h2, h3, h4);
    *port = p1 * 256 + p2;
 
+   printf("Data connection will be to %s:%d\n", ip, *port);
    return code;
 }
 
@@ -217,6 +271,12 @@ int send_retr(const int socketfd, const char *filename)
 
 int download_file(const int socketfdA, const int socketfdB, char *filename)
 {
+   if (filename == NULL || filename[0] == '\0')
+   {
+      fprintf(stderr, "Error: No filename to save (invalid URL path)\n");
+      return -1;
+   }
+
    FILE *f = fopen(filename, "wb");
    if (f == NULL)
    {
@@ -226,14 +286,22 @@ int download_file(const int socketfdA, const int socketfdB, char *filename)
 
    char buffer[MAX_RESPONSE_SIZE];
    int bytes;
+   long total = 0;
+   printf("Downloading file: %s\n", filename);
    while ((bytes = recv(socketfdB, buffer, sizeof(buffer), 0)) > 0)
    {
-      fwrite(buffer, 1, bytes, f);
+      size_t written = fwrite(buffer, 1, bytes, f);
+      total += written;
+      printf("Downloading file: %ld bytes received\r", total);
+      fflush(stdout);
    }
+   printf("\n");
    fclose(f);
 
    int code = read_reply(socketfdA, buffer);
    printf("Final Response (%d):\n%s\n", code, buffer);
+   if (code == 226)
+      printf("Transfer complete, %ld bytes written\n", total);
    return code;
 }
 
@@ -299,6 +367,12 @@ int main(int argc, char **argv)
       exit(-1);
    }
 
+   if (info.filename[0] == '\0')
+   {
+      fprintf(stderr, "Error: URL does not specify a filename\n");
+      exit(-1);
+   }
+
    printf("=== URL Parsing Results ===\n");
    printf("Protocol: %s\n", info.protocol);
    printf("User:     %s\n", info.user);
@@ -310,6 +384,7 @@ int main(int argc, char **argv)
    printf("===========================\n");
 
    char response[MAX_RESPONSE_SIZE];
+   printf("Connecting to server %s:%d...\n", info.ip, get_port(&info));
    int sockfdA = connect_socket(info.ip, get_port(&info));
    if (sockfdA < 0)
    {
@@ -325,6 +400,13 @@ int main(int argc, char **argv)
       exit(-1);
    }
    printf("Server Reply (%d): \n%s", reply_code, response);
+
+   if (reply_code != 220)
+   {
+      fprintf(stderr, "Error: Expected 220 from server, got %d\n", reply_code);
+      close(sockfdA);
+      exit(-1);
+   }
 
    if (authenticate_ftp(sockfdA, info.user, info.pass) != 230)
    {
@@ -349,6 +431,7 @@ int main(int argc, char **argv)
       close(sockfdA);
       exit(-1);
    }
+   printf("Data connection established on port %d\n", data_port);
 
    if (send_retr(sockfdA, info.path) != 150)
    {
@@ -364,6 +447,13 @@ int main(int argc, char **argv)
       close(sockfdA);
       close(sockfdB);
       exit(-1);
+   }
+
+   /* Send QUIT and expect 221 */
+   if (write(sockfdA, "QUIT\r\n", 6) >= 0)
+   {
+      int code = read_reply(sockfdA, response);
+      printf("QUIT Response (%d):\n%s\n", code, response);
    }
 
    close(sockfdA);
