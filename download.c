@@ -160,6 +160,40 @@ int authenticate_ftp(const int socket, const char *user, const char *pass)
    return code;
 }
 
+int set_binary_mode(const int socket)
+{
+   char response[MAX_RESPONSE_SIZE];
+   const char *type_cmd = "TYPE I\r\n";
+
+   if (write(socket, type_cmd, strlen(type_cmd)) < 0)
+   {
+      fprintf(stderr, "Error: Failed to send TYPE I command\n");
+      return -1;
+   }
+
+   int code = read_reply(socket, response);
+   printf("TYPE I Response (%d):\n%s\n", code, response);
+
+   return code;
+}
+
+int close_connection(const int socket)
+{
+   char response[MAX_RESPONSE_SIZE];
+   const char *quit_cmd = "QUIT\r\n";
+
+   if (write(socket, quit_cmd, strlen(quit_cmd)) < 0)
+   {
+      fprintf(stderr, "Error: Failed to send QUIT command\n");
+      return -1;
+   }
+
+   int code = read_reply(socket, response);
+   printf("QUIT Response (%d):\n%s\n", code, response);
+
+   return code;
+}
+
 int enter_passive_mode(const int socket, char *ip, int *port)
 {
    char response[MAX_RESPONSE_SIZE];
@@ -329,6 +363,13 @@ int main(int argc, char **argv)
       exit(-1);
    }
 
+   if (set_binary_mode(sockfdA) != 200)
+   {
+      fprintf(stderr, "Error: Failed to set binary mode\n");
+      close(sockfdA);
+      exit(-1);
+   }
+
    int data_port;
    char data_ip[16];
    if (enter_passive_mode(sockfdA, data_ip, &data_port) != 227)
@@ -362,6 +403,7 @@ int main(int argc, char **argv)
       exit(-1);
    }
 
+   close_connection(sockfdA);
    close(sockfdA);
    close(sockfdB);
    return 0;

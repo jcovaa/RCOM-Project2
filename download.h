@@ -70,6 +70,22 @@ int connect_socket(const char *ip, int port);
 int authenticate_ftp(const int socket, const char *user, const char *pass);
 
 /**
+ * @brief Sets the transfer mode to binary (TYPE I).
+ *
+ * @param socket Socket file descriptor for the control connection.
+ * @return FTP server response code on success, -1 on failure.
+ */
+int set_binary_mode(const int socket);
+
+/**
+ * @brief Sends the QUIT command to close the connection.
+ *
+ * @param socket Socket file descriptor for the control connection.
+ * @return FTP server response code on success, -1 on failure.
+ */
+int close_connection(const int socket);
+
+/**
  * @brief Enters passive mode on the FTP server.
  *
  * @param socket Socket file descriptor for the control connection.
