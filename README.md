@@ -19,5 +19,5 @@ gcc -Wall download.c -o download
 ```
 
 ## Students
-- Diogo Lima da Silva Costa, up202108655
-- João Rodrigues Vila Cova, up202307756
+- Diogo Lima da Silva Costa
+- João Rodrigues Vila Cova
